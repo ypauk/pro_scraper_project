@@ -1,44 +1,62 @@
-from playwright.sync_api import sync_playwright
-from src.settings import AUTH_FILE, HEADLESS, USER_AGENT, TIMEOUT
-from loguru import logger
 import os
+import random
+from playwright.async_api import async_playwright
+# Імпортуємо налаштування
+from src.settings import AUTH_FILE, HEADLESS, USER_AGENTS, TIMEOUT, PROXY_SETTINGS
+from loguru import logger
+from fake_useragent import UserAgent
 
 
 class BrowserClient:
-    def __init__(self):
+    def __init__(self, proxy: dict = None):
         self.playwright = None
         self.browser = None
-        self.context = None
+        # Ми прибрали self.context, бо тепер кожен потік у скрапері створює свій контекст
+        self.proxy = proxy if proxy else PROXY_SETTINGS
 
-    def start(self):
-        """Запуск браузера з налаштуваннями"""
-        self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.launch(headless=HEADLESS)
+        # Ініціалізуємо генератор випадкових User-Agents
+        try:
+            self.ua_generator = UserAgent()
+        except Exception as e:
+            logger.warning(f"⚠️ Не вдалося ініціалізувати fake-useragent: {e}. Буде використано ручний список.")
+            self.ua_generator = None
 
-        # Перевіряємо, чи файл існує ТА чи він не порожній
-        if AUTH_FILE.exists() and os.path.getsize(AUTH_FILE) > 0:
-            storage_state = str(AUTH_FILE)
-            logger.info("Завантажуємо збережену сесію з auth.json")
-        else:
-            storage_state = None
-            logger.warning("Файл сесії порожній або відсутній. Працюємо без авторизації.")
+    def get_random_ua(self) -> str:
+        """Метод для отримання надійного User-Agent з чітким логуванням джерела"""
+        if self.ua_generator:
+            try:
+                ua = self.ua_generator.random
+                logger.info("🌐 Використано динамічний User-Agent (fake-useragent)")
+                return ua
+            except Exception as e:
+                logger.warning(f"📡 Збій мережевої бази User-Agents: {e}")
 
-        if storage_state:
-            logger.info("Завантажуємо збережену сесію з auth.json")
-        else:
-            logger.warning("Файл сесії не знайдено. Працюємо як гість.")
+        # План Б: Випадковий вибір із твого списку в settings.py
+        fallback_ua = random.choice(USER_AGENTS)
+        logger.info("💾 Використано User-Agent з ручного списку (Fallback)")
+        return fallback_ua
 
-        # Створюємо контекст (профіль) браузера
-        self.context = self.browser.new_context(
-            storage_state=storage_state,
-            user_agent=USER_AGENT
+    async def start(self):
+        """Тільки запуск браузера (без створення зайвих вкладок)"""
+        self.playwright = await async_playwright().start()
+
+        # Запуск браузера
+        self.browser = await self.playwright.chromium.launch(
+            headless=HEADLESS,
+            proxy=self.proxy if self.proxy else None
         )
-        self.context.set_default_timeout(TIMEOUT)
-        return self.context.new_page()
 
-    def stop(self):
-        """Чисте закриття всіх ресурсів"""
-        if self.context: self.context.close()
-        if self.browser: self.browser.close()
-        if self.playwright: self.playwright.stop()
-        logger.info("Браузер успішно закрито.")
+        logger.info(f"🚀 Ядро браузера запущено (Proxy: {'Так' if self.proxy else 'Ні'})")
+        # Ми більше не створюємо context і page тут, щоб не було порожніх вікон
+
+    async def stop(self):
+        """Повне закриття браузера та ресурсів"""
+        try:
+            # Закриваємо лише браузер і playwright
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
+            logger.info("🛑 Асинхронний клієнт повністю зупинено.")
+        except Exception as e:
+            logger.error(f"❌ Помилка при зупинці клієнта: {e}")
