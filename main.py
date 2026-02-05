@@ -1,5 +1,5 @@
 import asyncio
-import time  # Додаємо для вимірювання часу
+import time
 import sys
 from loguru import logger
 from src.scraper import Scraper
@@ -19,20 +19,22 @@ async def main():
         encoding="utf-8"
     )
 
-    logger.info("🚀 Запуск УНІВЕРСАЛЬНОГО асинхронного скрапера")
+    logger.info("🚀 Запуск АВТОНОМНОГО краулера (Варіант В)")
 
-    # 2. Готуємо список URL (перші 5 сторінок)
-    urls_to_scrape = [f"https://quotes.toscrape.com/page/{i}/" for i in range(1, 6)]
+    # 2. Точка входу (лише ОДНЕ посилання)
+    start_url = "https://quotes.toscrape.com/"
 
     # 3. Ініціалізуємо скрапер
-    # Використовуємо CONCURRENCY з settings, якщо хочеш керувати через файл налаштувань
-    scraper = Scraper(max_items=100, concurrency=CONCURRENCY, proxy=PROXY_SETTINGS)
+    # Примітка: у Варіанті В concurrency використовується всередині scrape_page,
+    # але перехід між сторінками йде послідовно через кнопку "Next"
+    scraper = Scraper(max_items=50, proxy=PROXY_SETTINGS)
 
     # --- СТАРТ ТАЙМЕРА ---
     start_time = time.perf_counter()
 
-    # 4. ВЛАСНЕ ЗАПУСК
-    results = await scraper.run(urls_to_scrape)
+    # 4. ЗАПУСК КРАУЛЕРА
+    # Тепер ми передаємо лише один URL, а не список
+    results = await scraper.run(start_url)
 
     # --- СТОП ТАЙМЕРА ---
     end_time = time.perf_counter()
@@ -40,27 +42,29 @@ async def main():
 
     # 5. Експорт та фінальна статистика
     if results:
-        Exporter.to_csv(results, "parallel_quotes.csv")
+        # Зберігаємо результат
+        file_name = "crawler_quotes.csv"
+        Exporter.to_csv(results, file_name)
 
-        # Виводимо красивий звіт
         logger.success("-" * 40)
-        logger.success(f"🏁 Скрапінг завершено успішно!")
-        logger.info(f"📊 Зібрано цитат: {len(results)}")
+        logger.success(f"🏁 Краулінг завершено успішно!")
+        logger.info(f"📊 Разом зібрано: {len(results)} цитат")
         logger.info(f"⏱️ Загальний час: {total_time:.2f} сек.")
 
-        # Рахуємо середню швидкість на одну сторінку (не на цитату, бо ми скрейпимо сторінками)
-        pages_count = len(urls_to_scrape)
-        speed_per_page = total_time / pages_count
-        logger.info(f"⚡ Середня швидкість: {speed_per_page:.2f} сек./сторінка")
+        # Розрахунок ефективності
+        if total_time > 0:
+            logger.info(f"⚡ Продуктивність: {len(results) / total_time:.2f} цитат/сек.")
         logger.success("-" * 40)
     else:
-        logger.warning("🤔 Жодних даних не зібрано.")
+        logger.warning("🤔 Дані не знайдено. Перевір селектори або підключення.")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
+        # Це той самий "Safe Exit", про який я казав —
+        # навіть при перериванні можна додати логіку збереження
         logger.warning("\n⏹️ Виконання перервано користувачем.")
     except Exception as e:
         logger.critical(f"💥 Критична помилка: {e}")

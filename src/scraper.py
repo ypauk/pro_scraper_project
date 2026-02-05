@@ -4,7 +4,6 @@ from src.client import BrowserClient
 from src.parser import QuoteParser
 from src.models import QuoteModel
 from loguru import logger
-# Додаємо нові утиліти для імітації людини
 from src.utils import human_delay, smooth_scroll, human_mouse_move
 from src.settings import BASE_DELAY, CONCURRENCY, PROXY_LIST
 
@@ -18,79 +17,73 @@ class Scraper:
         self.results: list[QuoteModel] = []
         self._lock = asyncio.Lock()
 
-    async def scrape_page(self, semaphore: asyncio.Semaphore, url: str, index: int):
+    async def scrape_page(self, url: str, index: int) -> str | None:
         """
-        Обробка сторінки з імітацією реального користувача (скрол, миша, паузи)
+        Обробляє сторінку та ПОВЕРТАЄ URL наступної сторінки, якщо він є.
         """
-        async with semaphore:
-            if len(self.results) >= self.max_items:
-                return
+        if len(self.results) >= self.max_items:
+            return None
 
-            # 1. Ротація проксі
-            current_proxy = None
-            if PROXY_LIST:
-                current_proxy = PROXY_LIST[index % len(PROXY_LIST)]
-                proxy_label = current_proxy.get('server', 'unknown')
-            else:
-                proxy_label = "Рідний IP"
+        # 1. Вибір проксі та UA
+        current_proxy = PROXY_LIST[index % len(PROXY_LIST)] if PROXY_LIST else None
+        current_ua = self.client.get_random_ua()
 
-            # 2. Унікальний User-Agent
-            current_ua = self.client.get_random_ua()
-
-            # 3. Ізольований контекст
-            context = await self.client.browser.new_context(
-                user_agent=current_ua,
-                proxy=current_proxy
-            )
-            page = await context.new_page()
-
-            try:
-                logger.info(f"🧵 [Потік #{index}] Перехід: {url} | Proxy: {proxy_label}")
-
-                # Завантаження сторінки
-                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-
-                # --- ЕМУЛЯЦІЯ ПОВЕДІНКИ ЛЮДИНИ ---
-                # 80% шанс, що користувач поворушить мишкою
-                if random.random() < 0.8:
-                    await human_mouse_move(page)
-
-                # 60% шанс, що користувач прокрутить сторінку вниз (важливо для Lazy Load)
-                if random.random() < 0.6:
-                    await smooth_scroll(page)
-                    # Після скролу ще трохи рухаємо мишею, ніби читаємо знизу
-                    await human_mouse_move(page)
-                # --------------------------------
-
-                # Власне парсинг
-                new_items = await self.parser.parse_quotes(page)
-
-                async with self._lock:
-                    self._update_results(new_items)
-                    count = len(self.results)
-
-                logger.success(f"✅ [Потік #{index}] Успішно зібрано. В базі: {count}")
-
-                # Адаптивна пауза після роботи
-                min_d = BASE_DELAY[0] * self.concurrency if len(PROXY_LIST) <= 1 else BASE_DELAY[0]
-                max_d = BASE_DELAY[1] * self.concurrency if len(PROXY_LIST) <= 1 else BASE_DELAY[1]
-                await human_delay(min_d, max_d)
-
-            except Exception as e:
-                logger.error(f"❌ [Потік #{index}] Помилка на {url}: {e}")
-            finally:
-                await context.close()
-
-    async def run(self, urls: list[str]):
-        """Запуск паралельної обробки"""
-        await self.client.start()
-        semaphore = asyncio.Semaphore(self.concurrency)
+        context = await self.client.browser.new_context(
+            user_agent=current_ua,
+            proxy=current_proxy
+        )
+        page = await context.new_page()
+        next_page_url = None
 
         try:
-            tasks = [self.scrape_page(semaphore, url, i + 1) for i, url in enumerate(urls)]
-            await asyncio.gather(*tasks)
+            logger.info(f"🚀 [Сторінка #{index}] Перехід: {url}")
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
-            logger.info(f"🏁 Скрапінг завершено. Разом зібрано: {len(self.results)}")
+            # --- ЕМУЛЯЦІЯ ---
+            if random.random() < 0.8: await human_mouse_move(page)
+            if random.random() < 0.6:
+                await smooth_scroll(page)
+                await human_mouse_move(page)
+
+            # --- ПАРСИНГ ДАНИХ ---
+            new_items = await self.parser.parse_quotes(page)
+
+            # --- ПОШУК НАСТУПНОЇ СТОРІНКИ (Варіант В) ---
+            next_page_url = await self.parser.get_next_page_url(page)
+
+            async with self._lock:
+                self._update_results(new_items)
+                count = len(self.results)
+
+            logger.success(f"✅ [Сторінка #{index}] Зібрано {len(new_items)} шт. (Разом: {count})")
+
+            await human_delay(BASE_DELAY[0], BASE_DELAY[1])
+
+        except Exception as e:
+            logger.error(f"❌ Помилка на сторінці #{index}: {e}")
+        finally:
+            await context.close()
+            return next_page_url
+
+    async def run(self, start_url: str):
+        """
+        Точка входу для Crawler. Йде по кнопках 'Next'.
+        """
+        await self.client.start()
+        current_url = start_url
+        page_index = 1
+
+        try:
+            # Працюємо, поки є посилання і ми не набрали ліміт
+            while current_url and len(self.results) < self.max_items:
+                # Викликаємо обробку і отримуємо посилання на майбутню сторінку
+                current_url = await self.scrape_page(current_url, page_index)
+                page_index += 1
+
+                if not current_url:
+                    logger.info("🏁 Кнопка 'Next' не знайдена або ліміт досягнуто. Зупиняюсь.")
+
+            logger.info(f"🏁 Краулінг завершено. Всього зібрано: {len(self.results)}")
             return self.results
         finally:
             await self.client.stop()
