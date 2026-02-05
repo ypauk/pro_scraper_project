@@ -2,7 +2,7 @@ import os
 import random
 from playwright.async_api import async_playwright
 # Імпортуємо налаштування
-from src.settings import AUTH_FILE, HEADLESS, USER_AGENTS, TIMEOUT, PROXY_SETTINGS
+from src.settings import AUTH_FILE, HEADLESS, USER_AGENTS, TIMEOUT, PROXY_LIST
 from loguru import logger
 from fake_useragent import UserAgent
 
@@ -12,7 +12,7 @@ class BrowserClient:
         self.playwright = None
         self.browser = None
         # Ми прибрали self.context, бо тепер кожен потік у скрапері створює свій контекст
-        self.proxy = proxy if proxy else PROXY_SETTINGS
+        self.proxy = proxy or (PROXY_LIST[0] if PROXY_LIST else None)
 
         # Ініціалізуємо генератор випадкових User-Agents
         try:

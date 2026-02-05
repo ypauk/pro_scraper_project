@@ -1,26 +1,37 @@
 from playwright.async_api import Page
 from src.models import QuoteModel
 from loguru import logger
+# Ми вже імпортували SELECTORS та BASE_URL раніше у settings
+from src.settings import SELECTORS, BASE_URL
 
 
 class QuoteParser:
     @staticmethod
     async def parse_quotes(page: Page) -> list[QuoteModel]:
-        """Знаходить всі цитати на сторінці та перетворює їх у моделі"""
+        """Знаходить всі цитати на сторінці, використовуючи гнучкі селектори з конфігу"""
         quotes_data = []
-        elements = await page.query_selector_all(".quote")
+
+        # Беремо селектор головного блоку з конфігу (дефолт: .quote)
+        quote_selector = SELECTORS.get("quote_block", ".quote")
+        elements = await page.query_selector_all(quote_selector)
 
         for el in elements:
             try:
-                text_el = await el.query_selector(".text")
-                author_el = await el.query_selector(".author")
+                # Беремо селектори полів
+                text_selector = SELECTORS.get("text", ".text")
+                author_selector = SELECTORS.get("author", ".author")
+                tag_selector = SELECTORS.get("tags", ".tag")
+
+                text_el = await el.query_selector(text_selector)
+                author_el = await el.query_selector(author_selector)
 
                 text = await text_el.inner_text() if text_el else ""
                 author = await author_el.inner_text() if author_el else ""
 
-                tags_els = await el.query_selector_all(".tag")
+                tags_els = await el.query_selector_all(tag_selector)
                 tags = [await t.inner_text() for t in tags_els]
 
+                # Очищення тексту
                 text = text.replace('“', '').replace('”', '').strip()
 
                 quotes_data.append(QuoteModel(
@@ -35,18 +46,19 @@ class QuoteParser:
 
     @staticmethod
     async def get_next_page_url(page: Page) -> str | None:
-        """
-        Шукає посилання на наступну сторінку.
-        Якщо кнопки 'Next' немає — повертає None.
-        """
+        """Шукає посилання на наступну сторінку за гнучким селектором"""
         try:
-            # Селектор для кнопки Next на quotes.toscrape.com
-            next_button = await page.query_selector("li.next a")
+            # Селектор кнопки Next з конфігу (дефолт: li.next a)
+            next_selector = SELECTORS.get("next_button", "li.next a")
+            next_button = await page.query_selector(next_selector)
+
             if next_button:
                 href = await next_button.get_attribute("href")
-                # Перетворюємо відносне посилання (/page/2/) у повне
-                base_url = "https://quotes.toscrape.com"
-                return f"{base_url}{href}"
+                if href:
+                    # Якщо посилання відносне (/page/2/), додаємо базовий домен
+                    if href.startswith("/"):
+                        return f"{BASE_URL.rstrip('/')}{href}"
+                    return href
             return None
         except Exception as e:
             logger.error(f"Помилка при пошуку наступної сторінки: {e}")

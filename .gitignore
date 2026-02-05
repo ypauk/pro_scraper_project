@@ -24,3 +24,5 @@ data/*.log
 # Системні файли
 .DS_Store
 Thumbs.db
+
+config.yaml

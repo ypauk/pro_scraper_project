@@ -6,6 +6,8 @@ from src.models import QuoteModel
 from loguru import logger
 from src.utils import human_delay, smooth_scroll, human_mouse_move
 from src.settings import BASE_DELAY, CONCURRENCY, PROXY_LIST
+from src.state_manager import StateManager
+from src.exporter import Exporter
 
 
 class Scraper:
@@ -16,15 +18,12 @@ class Scraper:
         self.concurrency = concurrency
         self.results: list[QuoteModel] = []
         self._lock = asyncio.Lock()
+        self.state_manager = StateManager()
 
     async def scrape_page(self, url: str, index: int) -> str | None:
-        """
-        Обробляє сторінку та ПОВЕРТАЄ URL наступної сторінки, якщо він є.
-        """
         if len(self.results) >= self.max_items:
             return None
 
-        # 1. Вибір проксі та UA
         current_proxy = PROXY_LIST[index % len(PROXY_LIST)] if PROXY_LIST else None
         current_ua = self.client.get_random_ua()
 
@@ -33,22 +32,18 @@ class Scraper:
             proxy=current_proxy
         )
         page = await context.new_page()
-        next_page_url = None
 
         try:
+            # Тут ми впевнені, що url - це рядок
             logger.info(f"🚀 [Сторінка #{index}] Перехід: {url}")
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
-            # --- ЕМУЛЯЦІЯ ---
             if random.random() < 0.8: await human_mouse_move(page)
             if random.random() < 0.6:
                 await smooth_scroll(page)
                 await human_mouse_move(page)
 
-            # --- ПАРСИНГ ДАНИХ ---
             new_items = await self.parser.parse_quotes(page)
-
-            # --- ПОШУК НАСТУПНОЇ СТОРІНКИ (Варіант В) ---
             next_page_url = await self.parser.get_next_page_url(page)
 
             async with self._lock:
@@ -57,33 +52,61 @@ class Scraper:
 
             logger.success(f"✅ [Сторінка #{index}] Зібрано {len(new_items)} шт. (Разом: {count})")
 
+            if next_page_url:
+                self.state_manager.save_checkpoint(next_page_url)
+
             await human_delay(BASE_DELAY[0], BASE_DELAY[1])
+            return next_page_url
 
         except Exception as e:
             logger.error(f"❌ Помилка на сторінці #{index}: {e}")
+            return "ERROR_SIGNAL"
         finally:
             await context.close()
-            return next_page_url
 
     async def run(self, start_url: str):
-        """
-        Точка входу для Crawler. Йде по кнопках 'Next'.
-        """
         await self.client.start()
-        current_url = start_url
+
+        # --- ВИПРАВЛЕНИЙ БЛОК ЗАВАНТАЖЕННЯ ---
+        checkpoint_data = self.state_manager.load_checkpoint()
+
+        # Перевіряємо структуру завантажених даних
+        if isinstance(checkpoint_data, dict):
+            current_url = checkpoint_data.get("last_url", start_url)
+        elif isinstance(checkpoint_data, str):
+            current_url = checkpoint_data
+        else:
+            current_url = start_url
+
+        if current_url != start_url:
+            logger.info(f"♻️ Відновлення з чекпоїнта: {current_url}")
+        # ---------------------------------------
+
         page_index = 1
 
         try:
-            # Працюємо, поки є посилання і ми не набрали ліміт
             while current_url and len(self.results) < self.max_items:
-                # Викликаємо обробку і отримуємо посилання на майбутню сторінку
-                current_url = await self.scrape_page(current_url, page_index)
+                # Передаємо в scrape_page вже гарантовано чистий URL (рядок)
+                result = await self.scrape_page(current_url, page_index)
+
+                if result == "ERROR_SIGNAL":
+                    logger.warning(f"⚠️ Переривання через збій. Чекпоїнт залишився на: {current_url}")
+                    break
+
+                current_url = result
                 page_index += 1
 
-                if not current_url:
-                    logger.info("🏁 Кнопка 'Next' не знайдена або ліміт досягнуто. Зупиняюсь.")
+            if current_url is None and len(self.results) < self.max_items:
+                logger.info("🏁 Сайт закінчився.")
+                self.state_manager.clear_checkpoint()
+            elif len(self.results) >= self.max_items:
+                logger.info(f"🎯 Ліміт у {self.max_items} досягнуто.")
+                self.state_manager.clear_checkpoint()
 
-            logger.info(f"🏁 Краулінг завершено. Всього зібрано: {len(self.results)}")
+            return self.results
+
+        except Exception as e:
+            logger.critical(f"💥 Критичний збій: {e}")
             return self.results
         finally:
             await self.client.stop()
@@ -93,3 +116,4 @@ class Scraper:
         for item in new_items:
             if item.text not in existing_texts and len(self.results) < self.max_items:
                 self.results.append(item)
+                Exporter.append_to_csv(item, filename="live_results.csv")
