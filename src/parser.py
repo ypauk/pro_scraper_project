@@ -1,65 +1,82 @@
 from playwright.async_api import Page
-from src.models import QuoteModel
+from src.models import BookModel
 from loguru import logger
-# Ми вже імпортували SELECTORS та BASE_URL раніше у settings
-from src.settings import SELECTORS, BASE_URL
+from urllib.parse import urljoin
+# Import SELECTORS and START_URL from your settings
+from src.settings import SELECTORS, START_URL
 
 
-class QuoteParser:
+class BookParser:
     @staticmethod
-    async def parse_quotes(page: Page) -> list[QuoteModel]:
-        """Знаходить всі цитати на сторінці, використовуючи гнучкі селектори з конфігу"""
-        quotes_data = []
+    async def parse_books(page: Page) -> list[BookModel]:
+        """Extract all books from the page using selectors defined in config.yaml"""
+        books_data = []
 
-        # Беремо селектор головного блоку з конфігу (дефолт: .quote)
-        quote_selector = SELECTORS.get("quote_block", ".quote")
-        elements = await page.query_selector_all(quote_selector)
+        # Main book container selector (article.product_pod)
+        book_selector = SELECTORS.get("book_card", "article.product_pod")
+        elements = await page.query_selector_all(book_selector)
 
         for el in elements:
             try:
-                # Беремо селектори полів
-                text_selector = SELECTORS.get("text", ".text")
-                author_selector = SELECTORS.get("author", ".author")
-                tag_selector = SELECTORS.get("tags", ".tag")
+                # Get selectors from config
+                title_sel = SELECTORS.get("title", "h3 a")
+                price_sel = SELECTORS.get("price", "p.price_color")
+                avail_sel = SELECTORS.get("availability", ".instock.availability")
+                rating_sel = SELECTORS.get("rating", "p.star-rating")
+                image_sel = SELECTORS.get("image", "div.image_container img")
 
-                text_el = await el.query_selector(text_selector)
-                author_el = await el.query_selector(author_selector)
+                # Extract elements
+                title_el = await el.query_selector(title_sel)
+                price_el = await el.query_selector(price_sel)
+                avail_el = await el.query_selector(avail_sel)
+                rating_el = await el.query_selector(rating_sel)
+                image_el = await el.query_selector(image_sel)
 
-                text = await text_el.inner_text() if text_el else ""
-                author = await author_el.inner_text() if author_el else ""
+                # Data extraction
+                # Title is often truncated in text, so we use the 'title' attribute
+                title = await title_el.get_attribute("title") if title_el else "Unknown"
 
-                tags_els = await el.query_selector_all(tag_selector)
-                tags = [await t.inner_text() for t in tags_els]
+                # Product link
+                link_relative = await title_el.get_attribute("href") if title_el else ""
+                product_url = urljoin(page.url, link_relative)
 
-                # Очищення тексту
-                text = text.replace('“', '').replace('”', '').strip()
+                price = await price_el.inner_text() if price_el else "0"
+                availability = await avail_el.inner_text() if avail_el else "Unknown"
 
-                quotes_data.append(QuoteModel(
-                    text=text,
-                    author=author,
-                    tags=tags
+                # Rating is stored in CSS class name (e.g. "star-rating Three")
+                rating_class = await rating_el.get_attribute("class") if rating_el else ""
+
+                # Image: extract src and convert to absolute URL
+                img_relative = await image_el.get_attribute("src") if image_el else ""
+                image_url = urljoin(page.url, img_relative)
+
+                # Create model instance (BookModel validators will clean price and rating)
+                books_data.append(BookModel(
+                    title=title,
+                    price=price,
+                    availability=availability,
+                    rating=rating_class,
+                    image_url=image_url,
+                    product_url=product_url
                 ))
             except Exception as e:
-                logger.warning(f"Помилка при парсингу окремої цитати: {e}")
+                logger.warning(f"Error while parsing a single book item: {e}")
 
-        return quotes_data
+        return books_data
 
     @staticmethod
     async def get_next_page_url(page: Page) -> str | None:
-        """Шукає посилання на наступну сторінку за гнучким селектором"""
+        """Find and return the next page URL using the next_button selector"""
         try:
-            # Селектор кнопки Next з конфігу (дефолт: li.next a)
             next_selector = SELECTORS.get("next_button", "li.next a")
             next_button = await page.query_selector(next_selector)
 
             if next_button:
                 href = await next_button.get_attribute("href")
                 if href:
-                    # Якщо посилання відносне (/page/2/), додаємо базовий домен
-                    if href.startswith("/"):
-                        return f"{BASE_URL.rstrip('/')}{href}"
-                    return href
+                    # Use urljoin to properly resolve relative URLs
+                    return urljoin(page.url, href)
             return None
         except Exception as e:
-            logger.error(f"Помилка при пошуку наступної сторінки: {e}")
+            logger.error(f"Error while locating the next page: {e}")
             return None

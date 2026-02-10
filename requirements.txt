@@ -1,18 +1,21 @@
-# Ядро для роботи з браузером
+# Core browser automation library
 playwright==1.40.0
 
-# Валідація даних та моделі
+# Data validation and structured models
 pydantic==2.5.2
 
-# Професійне логування (кольорові повідомлення в консолі)
+# Advanced logging library with colored console output
 loguru==0.7.2
 
-# Додаткова бібліотека для роботи з Excel (якщо захочеш зберігати в .xlsx)
+# YAML parser for configuration files
+PyYAML==6.0
+
+# Generate random/fake User-Agent headers
+fake-useragent==1.1.1
+
+# Optional: Excel export support
 pandas==2.1.3
 openpyxl==3.1.2
-
-fake-useragent
-pyyaml
 
 #pip install -r requirements.txt
 #playwright install chromium

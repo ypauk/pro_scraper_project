@@ -4,67 +4,74 @@ import sys
 from loguru import logger
 from src.scraper import Scraper
 from src.exporter import Exporter
-from src.settings import LOG_DIR, PROXY_SETTINGS, CONCURRENCY
+from src.settings import LOG_DIR, PROXY_SETTINGS, START_URL, MAX_ITEMS
 
 
 async def main():
-    # 1. Налаштовуємо логування
+    # 1. Configure logging
     logger.remove()
-    logger.add(sys.stdout, level="INFO", colorize=True)
     logger.add(
-        LOG_DIR / "debug.log",
+        sys.stdout,
+        level="INFO",
+        colorize=True,
+        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>"
+    )
+    logger.add(
+        LOG_DIR / "books_scraper.log",
         rotation="10 MB",
-        retention="10 days",
+        retention="5 days",
         level="INFO",
         encoding="utf-8"
     )
 
-    logger.info("🚀 Запуск АВТОНОМНОГО краулера (Варіант В)")
+    logger.info("🚀 Launching universal scraper for books.toscrape.com")
 
-    # 2. Точка входу (лише ОДНЕ посилання)
-    start_url = "https://quotes.toscrape.com/"
+    # 2. Entry point and limits (from settings)
+    start_url = START_URL
+    max_books = MAX_ITEMS
 
-    # 3. Ініціалізуємо скрапер
-    # Примітка: у Варіанті В concurrency використовується всередині scrape_page,
-    # але перехід між сторінками йде послідовно через кнопку "Next"
-    scraper = Scraper(max_items=50, proxy=PROXY_SETTINGS)
+    # 3. Initialize scraper
+    # Passing proxy and max item limit
+    scraper = Scraper(max_items=max_books, proxy=PROXY_SETTINGS)
 
-    # --- СТАРТ ТАЙМЕРА ---
+    # --- START TIMER ---
     start_time = time.perf_counter()
 
-    # 4. ЗАПУСК КРАУЛЕРА
-    # Тепер ми передаємо лише один URL, а не список
+    # 4. Run the crawler
+    # The run method sequentially navigates pages via "Next" until max_items is reached
     results = await scraper.run(start_url)
 
-    # --- СТОП ТАЙМЕРА ---
+    # --- STOP TIMER ---
     end_time = time.perf_counter()
     total_time = end_time - start_time
 
-    # 5. Експорт та фінальна статистика
+    # 5. Export results and final statistics
     if results:
-        # Зберігаємо результат
-        file_name = "crawler_quotes.csv"
-        Exporter.to_csv(results, file_name)
+        # Save results to data folder
+        output_file = "live_results.csv"
+        Exporter.to_csv(results, output_file)
 
-        logger.success("-" * 40)
-        logger.success(f"🏁 Краулінг завершено успішно!")
-        logger.info(f"📊 Разом зібрано: {len(results)} цитат")
-        logger.info(f"⏱️ Загальний час: {total_time:.2f} сек.")
+        logger.success("-" * 45)
+        logger.success("🏁 Scraping completed successfully!")
+        logger.info(f"📚 Total books collected: {len(results)}")
+        logger.info(f"⏱️ Total runtime: {total_time:.2f} sec.")
 
-        # Розрахунок ефективності
+        # Calculate efficiency
         if total_time > 0:
-            logger.info(f"⚡ Продуктивність: {len(results) / total_time:.2f} цитат/сек.")
-        logger.success("-" * 40)
+            avg_speed = len(results) / total_time
+            logger.info(f"⚡ Collection speed: {avg_speed:.2f} books/sec")
+
+        logger.info(f"📂 Data saved to: {output_file}")
+        logger.success("-" * 45)
     else:
-        logger.warning("🤔 Дані не знайдено. Перевір селектори або підключення.")
+        logger.warning("🤔 No data found. Possible reasons: selector changes or site blocking.")
 
 
 if __name__ == "__main__":
     try:
+        # Run the async event loop
         asyncio.run(main())
     except KeyboardInterrupt:
-        # Це той самий "Safe Exit", про який я казав —
-        # навіть при перериванні можна додати логіку збереження
-        logger.warning("\n⏹️ Виконання перервано користувачем.")
+        logger.warning("\n⏹️ Process stopped by user (Ctrl+C).")
     except Exception as e:
-        logger.critical(f"💥 Критична помилка: {e}")
+        logger.critical(f"💥 Critical error during execution: {e}")

@@ -1,26 +1,26 @@
-# Налаштування скрапінгу
+# Scraping settings
 scraping:
   start_url: "https://quotes.toscrape.com"
   max_items: 50
   concurrency: 1
 
-# Паузи між діями (секунди)
+# Delays between actions (seconds)
 delays:
   min: 3
   max: 7
 
-# Налаштування браузера
+# Browser settings
 browser:
   headless: false
   timeout: 30000
 
-# Селектори (якщо сайт зміниться — міняй ТІЛЬКИ тут)
+# CSS selectors (update here only if site structure changes)
 selectors:
   quote_block: ".quote"
   text: ".text"
   author: ".author"
   next_button: "li.next a"
 
-# Список проксі (можна додавати/видаляти без коду)
+# Proxy list (add/remove without changing code)
 proxies:
   # - {server: "http://118.193.37.241:3129", username: "user", password: "pass"}

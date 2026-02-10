@@ -1,28 +1,29 @@
-# Python (тимчасові файли компіляції)
+# Python (temporary compilation files)
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Віртуальне середовище (це замовник встановить сам через requirements.txt)
+# Virtual environments (client will install dependencies via requirements.txt)
 .venv/
 venv/
 ENV/
 
-# Конфіденційні дані (твоя сесія авторизації)
+# Sensitive data (authorization session)
 auth.json
 
-# Результати скрапінгу та логи
+# Scraping results and logs
 data/*.csv
 data/*.json
 data/*.log
 !data/.gitkeep
 
-# Налаштування IDE (PyCharm, VS Code)
+# IDE settings (PyCharm, VS Code)
 .idea/
 .vscode/
 
-# Системні файли
+# System files
 .DS_Store
 Thumbs.db
 
+# Local configuration
 config.yaml
